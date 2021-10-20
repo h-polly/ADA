@@ -29,4 +29,6 @@ ggplot(data = na.omit(brfss17), aes(x = SEX, y = ht_meters))+
   labs(x = "Sex", y="Heigh in meters", title = "Median Height Boxplot") +
   scale_color_brewer(palette = "Accent")
 
-"C:\Users\polly\OneDrive\Fall 2021\ADA\midterm code.R"
+#mean height
+mean(males$ht_meters, na.rm=TRUE)
+mean(females$ht_meters, na.rm=TRUE)
