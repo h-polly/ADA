@@ -1,0 +1,194 @@
+---
+title: "ADA_Final_Project_Code"
+author: "Polly Haun"
+date: "12/15/2021"
+output: html_document
+---
+#Install packages and open libraries
+```{r, eval=FALSE}
+pacman::p_load(readxl, ggplot2, tidyverse, foreign, dplyr, stats, lmtest, readr, ggpubr, ggrepel, lfe, broom, did, table1, VIM, mice, lattice, DiagrammeR)
+```
+
+#Import data
+```{r}
+breast <- read_excel("final project data.xlsx", sheet=1)
+```
+
+#Clean data
+#Rename columns
+```{r}
+breast<-breast%>%
+  rename("popLabor"="Population in Civilian Labor Force",
+         "unemployRate" = "Unemployment Rate",
+         "houseIndex" = "Median Household Index",
+         "GINI" = "GINI Index",
+         "popPoverty" = "Population with Poverty Status Determined",
+         "bpl" = "Below Poverty Level",
+         "apl"= "At or Above Poverty Level",
+         "bplRate" = "Below Poverty Level Rate", 
+         "bcRate" = "Age-Adjusted Breast Cancer Incidence Rate",
+         "expansion" = "Expansion Status",
+         "Code" = "States Code")
+colnames(breast)
+```
+
+
+#Clean data
+#Check and adjust the class of age-adjusted breast cancer incidence rate to numeric. Classify suppressed values as "NA". Rename and recode "Expansion Status" variable for nonexpansion (=0) and expansion(=1). Next, add a variable for the year to indicate if it was pre (before and 2013) or post expansion (after 2013). Finally, create the DiD interaction term between the expansion variable and the year variable. 
+```{r}
+class(breast$bcRate)
+breast$bcRate <- as.numeric(breast$bcRate)
+breast$bcRate[breast$bcRate== "Suppressed"] <- NA
+summary(breast$bcRate)
+
+breast<-breast%>%
+  mutate(expansion=case_when(expansion %in% c("No")~ 0,
+                               expansion %in% c("Yes")~ 1))
+table(breast$expansion)
+
+class(breast$Year)
+breast<-breast%>%
+  mutate(year2=case_when(Year <= 2013 ~ 0,
+                         Year > 2013 ~ 1))
+table(breast$year2)
+
+breast$DiD <- (breast$expansion*breast$year2)
+
+count(breast, expansion, year2, DiD)
+```
+
+#Clean Data
+#Multiply potential confounders by 100 so that the rates are easier to analyze. 
+```{r}
+breast$unemployRate <- breast$unemployRate*100
+summary(breast$unemployRate)
+
+breast$bplRate<-breast$bplRate*100
+summary(breast$bplRate)
+
+```
+
+#Create a smaller data frame that only includes the states that will be analyzed. Two of the states, Nevada and New Mexico, have some years with missing data. 
+```{r}
+breast2 <- na.omit(breast)
+table(breast2$States)
+breast2 <- breast2[(breast2$Code!= 32),]
+breast2 <- breast2[(breast2$Code!= 35),]
+breastNV <- breast[(breast$States=="Nevada"),]
+breastNM <- breast[(breast$States=="New Mexico"),]
+breast3 <- rbind(breastNM, breastNV) 
+breastClean <- rbind(breast2, breast3)
+table(breastClean$States)
+summary(breastClean$bcRate)
+```
+
+#Nevada is missing 1 observation for breast cancer incidence rate and New Mexico is missing 5 observations. We will use the MICE package to impute the missing data. 
+```{r}
+md.pattern(breastClean, rotate.names = TRUE)
+marginplot(breastClean[,c("expansion","bcRate")],col=c("blue","red","orange"), cex=1,cex.lab=1, pch=20)
+pbox(breastClean, pos=7)
+imp <- mice(breastClean, m=5, method="cart")
+imp
+imp$imp$bcRate
+breastImp<-mice::complete(data=imp,action=1)
+```
+#Figure 1
+```{r}
+grViz("digraph flowchart{
+      node [fontname = Helvetica, shape = rectangle, fontsize = 15]
+      tab1 [label = '@@1']
+      tab2 [label = '@@2']
+      tab3 [label = '@@3']
+      tab4 [label = '@@4']
+      tab1 -> tab2 -> tab3 -> tab4}
+      [1]: 'States and Washington DC (n=51)'
+      [2]: 'Excluding states that expanded Medicaid between 2015-2018 (n=5)'
+      [3]: 'Excluding states with suppressed data (n=9)'
+      [4]: 'Total states in analysis (n=37)'")
+```
+
+#Table 1
+```{r}
+class(breastImp$Count) #change class to numeric
+breastImp$Count <- as.numeric(breastImp$Count)
+
+label(breastImp$bcRate) <- "Breast Cancer Incidence Rate" 
+label(breastImp$bplRate) <- "Below Poverty Level Rate" 
+label(breastImp$unemployRate) <- "Unemployment Rate" 
+
+breastImp$year2<-factor(breastImp$year2, levels=c(0,1), labels=c("2009-2013", "2014-2018"))
+breastImp$expansion<-factor(breastImp$expansion, levels=c(0,1), labels=c("Non-Expansion", "Expansion"))
+
+#table1(~bcRate + Count + bplRate + unemployRate |year2*expansion, breastClean, overall="Total", topclass = "Rtable1-zebra")
+
+table1(~bcRate + Count + bplRate + unemployRate |year2*expansion, breastImp, overall="Total")
+
+```
+
+
+#I created a total of four plots. The first is the main interaction plot that shows breast cancer incidence over time for the expansion and non-expansions groups. From here we can visually assess the parallel lines assumption, which appears to possibly not hold. The second plot includes a 95% CI for that incidence rate. The last two plots show the potential confounders, unemployment rate and poverty rate over time. 
+```{r}
+#interaction without 95% CI
+ggplot(breastImp, aes(x=Year, y=bcRate, group=expansion, color=expansion)) +
+  stat_summary(geom = "line") +
+  geom_vline(xintercept = 2014) +
+  labs(x="Year", y="Breast Cancer Incidence Rate Per 100,000", title="Effect of Medicaid Expansion on Breast Cancer Incidence") +
+  xlim(2009, 2018) + 
+  theme_minimal()+
+  theme(legend.title=element_blank())
+
+#with 95% CI
+ggplot(breastImp, aes(x=Year, y=bcRate, group=expansion, color=expansion)) +
+  stat_summary(geom = "line") +
+  geom_vline(xintercept = 2014) +
+  labs(x="Year", y="Breast Cancer Incidence Rate Per 100,000", title="Effect of Medicaid Expansion on Breast Cancer Incidence") +
+  xlim(2009, 2018) + 
+  geom_smooth(fill="#69b3a2", se=TRUE) +
+  theme_minimal()+
+  theme(legend.title=element_blank())
+
+#graph confounders
+ggplot(breastImp, aes(Year, unemployRate, group=expansion, color=expansion)) +
+  stat_summary(geom = "line") +
+  labs(y="Unemployment Rate among Black Women") +
+  geom_vline(xintercept = 2014) +
+  theme_minimal()
+
+ggplot(breastImp, aes(Year, bplRate, group=expansion, color=expansion)) +
+  stat_summary(geom = "line") +
+  geom_vline(xintercept = 2014) +
+  labs(y="Below Poverty Level Rate among Black Women") +
+  theme_minimal()
+
+```
+
+
+#Finally, it's time to look at the beta coefficient for the interaction term. I ran both the model with imputed data and the model with the missing data to see how they compared.I also ran adjusted and unadjusted models and assessed for confounding below. Because the potential founders both affected the beta coefficient, I kept them in the model and reported the adjusted results. 
+```{r}
+didTestAdj <- lm(bcRate ~ expansion + year2 + DiD + bplRate + unemployRate, data = breastImp)
+summary(didTestAdj)
+
+didTestUnadj <- lm(bcRate ~ expansion + year2 + DiD, data=breastImp)
+summary(didTestUnadj)
+
+didTest2 <- lm(bcRate ~ expansion + year2 + DiD + bplRate + unemployRate, data = breastClean)
+summary(didTest2)
+
+confint(didTestAdj, "DiD", level=0.95)
+confint(didTestUnadj, "DiD", level=0.95)
+```
+
+#Assess for confounding
+```{r}
+#statewide below the poverty line rate
+didTestCon1 <- lm(bcRate ~ expansion + year2 + DiD + bplRate, data = breastImp)
+#statewide unemployent rate
+didTestCon2 <- lm(bcRate ~ expansion + year2 + DiD + unemployRate, data = breastImp)
+
+#calculate percent change
+con1 <- (didTestUnadj$coefficients[3]-didTestCon1$coefficients[3]/didTestUnadj$coefficients[3]) * 100
+con2 <- (didTestUnadj$coefficients[3]-didTestCon2$coefficients[3]/didTestUnadj$coefficients[3]) * 100
+con1
+con2
+```
+
