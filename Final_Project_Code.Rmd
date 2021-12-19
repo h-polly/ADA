@@ -162,6 +162,27 @@ ggplot(breastImp, aes(Year, bplRate, group=expansion, color=expansion)) +
 
 ```
 
+#Test for the parallel trends assumption. This will be done by running a mini-DiD for the pre expansion time period (2009-2013). 2011 will serve as the proxy expansion date and I will look to see if the beta coefficient is significant. 
+```{r}
+#Create a dataframe with 2009-2013 only
+breastMini <- breastImp[(breastImp$year2==0),]
+
+#Add a time variable then create the mini DiD interaction term
+breastMini<-breastMini%>%
+  mutate(year3=case_when(Year <= 2010 ~ 0,
+                         Year > 2010 ~ 1))
+table(breastMini$year3)
+
+breastMini$DiD2 <- (breastMini$expansion*breastMini$year3)
+count(breastMini, expansion, year3, DiD2)
+
+didParallel <- lm(bcRate ~ expansion + year3 + DiD2, data = breastMini)
+summary(didParallel)
+confint(didParallel, "DiD2", level=0.95)
+
+#beta interaction term is NOT significant, so we cannot reject the Parallel Trends assumption
+```
+
 
 #Finally, it's time to look at the beta coefficient for the interaction term. I ran both the model with imputed data and the model with the missing data to see how they compared.I also ran adjusted and unadjusted models and assessed for confounding below. Because the potential founders both affected the beta coefficient, I kept them in the model and reported the adjusted results. 
 ```{r}
